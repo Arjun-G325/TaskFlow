@@ -5,8 +5,9 @@
 TaskFlow is a full-stack project management web application (similar to a lightweight Trello/Jira) built by a 2-person team. Users create projects, add team members, and manage tasks on a kanban-style board (cards moving across To Do / In Progress / Done columns).
 
 Beyond the board, TaskFlow is a real **team collaboration tool**:
-- A **task detail view** showing everything about a task: who created it, who it is assigned to, description, subtasks, every comment, and full history
-- **Comments** on every task
+- A **task view** showing the parent task and its subtasks
+- A **subtask detail view** showing a subtask's details, comments, and full history
+- **Comments** on subtasks (the leaf work items), not on parent tasks
 - **Notifications** for anything relevant (assignments, comments, status changes, deadlines)
 - An **Activity board** showing who did what, and a **Progress board** with charts for tracking project progress
 - **Sign in with Google** (Gmail login) alongside normal email/password login
@@ -46,26 +47,21 @@ Beyond the board, TaskFlow is a real **team collaboration tool**:
 1. **Auth** — register, login, JWT-based session, password hashing, plus **"Continue with Google"** sign-in. Google users are found or created by email; if the email already exists from a password signup, the Google login links to that same account instead of creating a duplicate. Email/password login stays as a fallback.
 2. **Projects** — create/view/edit/delete a project, list all projects a user belongs to
 3. **Project Members** — add a user to a project by email, roles: owner / member
-4. **Tasks** — create/view/edit/delete tasks within a project; fields: title, description, status (todo/in_progress/done), assignee, due date, priority, created by
+4. **Tasks** — create/view/edit/delete tasks within a project; fields: title, description, status (todo/in_progress/done), multiple assignees, due date, priority, created by
 5. **Kanban Board** — drag-and-drop tasks between status columns, updates DB on drop
 6. **AI Assist** — button on task creation/edit: user types a short title, clicks "AI Assist," AI generates a description + 3-5 subtasks, user can edit before saving
 
 ### Collaboration & analytics features
-7. **Task Detail View** — clicking a task shows everything in one place:
-   - Title, description, status, priority, due date
-   - **Created by** (who assigned it) and **Assigned to** (who must do it)
-   - Subtasks checklist (including AI-generated ones)
-   - **All comments** from everyone, oldest to newest, like a chat
-   - **History** of changes (e.g. "Ravi created this", "Ravi assigned it to Priya", "Priya moved it to In Progress")
-8. **Comments** — any project member can comment on any task (e.g. "I need the API done before I can start the UI")
+7. **Task and Subtask Detail Views** — parent tasks remain the Kanban cards and contain subtasks. A task view shows the parent task and its subtasks. Clicking a subtask opens its own detail view with its details, **all comments** from everyone oldest to newest, and its **change history** (for example, "Ravi created this" or "Priya completed it").
+8. **Comments** — any project member can comment on a subtask (for example, "Add image upload to this screen"). Comments belong to the subtask, not the parent task.
 9. **Notifications** — bell icon with unread count; notifications are created for:
    - You are assigned a task
-   - Someone comments on a task you created or are assigned to
-   - Status of a task you created or are assigned to changes
+   - Someone comments on a subtask you created or are assigned to
+   - Status of a task or subtask you created or are assigned to changes
    - A deadline is close (due within 24 hours) or missed (overdue)
    - You are added to a project
 
-   Clicking a notification opens the related task. "Mark all as read" button.
+   Clicking a notification opens the related task or subtask. "Mark all as read" button.
 10. **Activity Board (who did what)** — a feed like "Priya completed 'Build login' — 2 hours ago", filterable by person
 11. **Progress Board (how is the project going)** — charts showing tasks by status, % completed, overdue tasks, workload per member, and tasks completed per week
 
@@ -102,12 +98,15 @@ title         VARCHAR(200) NOT NULL
 description   TEXT
 status        ENUM('todo', 'in_progress', 'done') DEFAULT 'todo'
 created_by_id INT FK -> users.id NOT NULL          -- NEW: who created/assigned it
-assignee_id   INT FK -> users.id NULLABLE
 due_at        DATETIME NULLABLE                      -- deadline date and time
 priority      ENUM('low', 'medium', 'high') DEFAULT 'medium'
 completed_at  DATETIME NULLABLE                    -- NEW: set when moved to done (for analytics)
 created_at    DATETIME DEFAULT CURRENT_TIMESTAMP    -- task creation time
 updated_at    DATETIME ON UPDATE CURRENT_TIMESTAMP  -- last task update time
+
+-- task_assignees: many-to-many relationship between tasks and assigned users
+task_id       INT FK -> tasks.id, composite PK
+user_id       INT FK -> users.id, composite PK
 
 -- subtasks
 id              INT PK AUTO_INCREMENT
@@ -116,6 +115,7 @@ title           VARCHAR(200) NOT NULL
 description     TEXT NULLABLE
 is_done         BOOLEAN DEFAULT FALSE
 is_ai_generated BOOLEAN DEFAULT FALSE
+updated_at      DATETIME ON UPDATE CURRENT_TIMESTAMP
 
 -- ai_logs
 id            INT PK AUTO_INCREMENT
@@ -125,9 +125,9 @@ ai_response   TEXT
 was_accepted  BOOLEAN DEFAULT NULL
 created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 
--- comments                                         -- NEW
+-- comments on leaf subtasks                         -- NEW
 id            INT PK AUTO_INCREMENT
-task_id       INT FK -> tasks.id
+subtask_id    INT FK -> subtasks.id NOT NULL
 user_id       INT FK -> users.id
 body          TEXT NOT NULL
 created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -136,15 +136,17 @@ created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 id            INT PK AUTO_INCREMENT
 project_id    INT FK -> projects.id
 task_id       INT FK -> tasks.id NULLABLE
+subtask_id    INT FK -> subtasks.id NULLABLE
 user_id       INT FK -> users.id                    -- who did the action
 action        VARCHAR(50) NOT NULL                  -- e.g. task_created, task_assigned, status_changed, subtask_updated, comment_added, member_added
-details       JSON NULLABLE                         -- e.g. {"from": "todo", "to": "in_progress"} or {"subtask_id": 4, "note": "Add image upload"}
+details       JSON NULLABLE                         -- e.g. {"field": "description", "before": "Old text", "after": "Updated text"}
 created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 
 -- notifications                                    -- NEW
 id            INT PK AUTO_INCREMENT
 user_id       INT FK -> users.id                    -- who receives it
 task_id       INT FK -> tasks.id NULLABLE
+subtask_id    INT FK -> subtasks.id NULLABLE
 project_id    INT FK -> projects.id NULLABLE
 message       VARCHAR(255) NOT NULL
 is_read       BOOLEAN DEFAULT FALSE
@@ -170,9 +172,9 @@ POST   /projects/{id}/members
 GET    /projects/{id}/members
 
 GET    /projects/{id}/tasks
-POST   /projects/{id}/tasks
-GET    /tasks/{id}             # full detail: creator, assignee, subtasks, comments, history
-PUT    /tasks/{id}
+POST   /projects/{id}/tasks    # accepts assignee_ids: [user_id, ...]
+GET    /tasks/{id}             # parent task details and subtask list
+PUT    /tasks/{id}             # may replace assignee_ids
 DELETE /tasks/{id}
 PATCH  /tasks/{id}/status      # for drag-and-drop updates
 
@@ -181,9 +183,10 @@ POST   /tasks/{id}/subtasks
 PUT    /subtasks/{id}          # edit subtask title and description
 PATCH  /subtasks/{id}          # update completion state or other individual fields
 DELETE /subtasks/{id}
+GET    /subtasks/{id}          # full subtask detail, comments, and history
 
-POST   /tasks/{id}/comments            # NEW
-GET    /tasks/{id}/comments            # NEW
+POST   /subtasks/{id}/comments         # NEW
+GET    /subtasks/{id}/comments         # NEW
 
 GET    /projects/{id}/activity         # NEW: activity feed, ?user_id= filter
 GET    /projects/{id}/analytics        # NEW: data for the Progress board
@@ -224,16 +227,16 @@ Every important action goes through ONE backend helper function, e.g. `record_ev
 1. Inserts a row into `activity_log`
 2. Creates `notifications` rows for the right people
 
-Endpoints (create task, assign, change status, create/edit/delete a subtask, comment, add member) just call this helper. Subtask changes are recorded in `activity_log` with details such as the subtask title and what changed. This gives us the task history, the Activity board, and all notifications from one piece of code.
+Endpoints (create task, assign, change status, create/edit/delete a subtask, comment on a subtask, add member) just call this helper. Every subtask event stores its `subtask_id` (and its parent `task_id`) in `activity_log`. For edits, `details` records the changed field and its before/after values; `user_id` identifies who made the change and `created_at` records when. The subtask detail view reads its history from those rows. This gives us the activity feed, subtask history, and notifications from one piece of code.
 
 ### Who gets notified
 | Event | Notified |
 |---|---|
-| Task assigned / reassigned | the new assignee |
-| Comment added | task creator + assignee (except the commenter) |
-| Status changed | task creator + assignee (except the person who changed it) |
+| Task assigned / reassigned | each newly assigned user |
+| Comment added to a subtask | parent task creator + all task assignees (except the commenter) |
+| Task or subtask status changed | parent task creator + all task assignees (except the person who changed it) |
 | Added to a project | the added user |
-| Due within 24 hours / overdue | the assignee (and creator for overdue) |
+| Due within 24 hours / overdue | all task assignees (and creator for overdue) |
 
 Never notify a user about their own action.
 
@@ -245,7 +248,7 @@ A scheduled job (APScheduler, runs hourly) finds tasks that are due within 24 ho
 - Task count per status
 - Completion percentage
 - Overdue tasks (due_date < today and status != done)
-- Tasks per assignee (workload), split by status
+- Tasks per assignee (workload), split by status; a task assigned to several people counts once for each assignee
 - Tasks completed per week (using `completed_at`)
 
 The Progress board renders these with Recharts (bar chart for status/workload, line chart for weekly completion, a progress bar for % complete).
@@ -287,8 +290,9 @@ frontend/
       KanbanBoard.jsx
       TaskCard.jsx
       TaskModal.jsx          # create/edit, includes AI Assist button
-      TaskDetailPanel.jsx    # full task view: people, subtasks, comments, history
-      CommentList.jsx / CommentForm.jsx
+      TaskDetailPanel.jsx    # parent task and its subtask list
+      SubtaskDetailPanel.jsx # subtask details, comments, and history
+      CommentList.jsx / CommentForm.jsx # comments attached to a subtask
       NotificationBell.jsx   # bell icon, unread count, dropdown list
       ProjectList.jsx
       Login.jsx / Register.jsx
@@ -345,9 +349,9 @@ Days 1-5 build the core (~5 hrs each per day). Days 6-7 add the collaboration an
 ### Day 6 (~7 hrs each) — Task detail, comments, activity log
 - **Person A:**
   - Build `event_service.record_event()` and call it from task create, assign, status change, subtask create/edit/delete, and member add endpoints (4 hrs)
-  - Build comments endpoints, and make `GET /tasks/{id}` return creator, assignee, subtasks, comments, and history (3 hrs)
+  - Build subtask comment endpoints, and make `GET /subtasks/{id}` return subtask details, comments, and history (3 hrs)
 - **Person B:**
-  - Build `TaskDetailPanel` (opens when a task card is clicked) with people, subtasks, comments list, comment form, and history (5 hrs)
+  - Build `TaskDetailPanel` for the parent task and subtask list, plus `SubtaskDetailPanel` with subtask comments and history (5 hrs)
   - Start the Progress page layout with Recharts placeholder charts (2 hrs)
 
 ### Day 7 (~7 hrs each) — Analytics, notifications
