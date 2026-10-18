@@ -91,9 +91,8 @@ owner_id      INT FK -> users.id
 created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 
 -- project_members
-id            INT PK AUTO_INCREMENT
-project_id    INT FK -> projects.id
-user_id       INT FK -> users.id
+project_id    INT FK -> projects.id, composite PK
+user_id       INT FK -> users.id, composite PK
 role          ENUM('owner', 'member') DEFAULT 'member'
 
 -- tasks
@@ -104,16 +103,17 @@ description   TEXT
 status        ENUM('todo', 'in_progress', 'done') DEFAULT 'todo'
 created_by_id INT FK -> users.id NOT NULL          -- NEW: who created/assigned it
 assignee_id   INT FK -> users.id NULLABLE
-due_date      DATE NULLABLE
+due_at        DATETIME NULLABLE                      -- deadline date and time
 priority      ENUM('low', 'medium', 'high') DEFAULT 'medium'
 completed_at  DATETIME NULLABLE                    -- NEW: set when moved to done (for analytics)
-created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
-updated_at    DATETIME ON UPDATE CURRENT_TIMESTAMP
+created_at    DATETIME DEFAULT CURRENT_TIMESTAMP    -- task creation time
+updated_at    DATETIME ON UPDATE CURRENT_TIMESTAMP  -- last task update time
 
 -- subtasks
 id              INT PK AUTO_INCREMENT
 task_id         INT FK -> tasks.id
 title           VARCHAR(200) NOT NULL
+description     TEXT NULLABLE
 is_done         BOOLEAN DEFAULT FALSE
 is_ai_generated BOOLEAN DEFAULT FALSE
 
@@ -137,8 +137,8 @@ id            INT PK AUTO_INCREMENT
 project_id    INT FK -> projects.id
 task_id       INT FK -> tasks.id NULLABLE
 user_id       INT FK -> users.id                    -- who did the action
-action        VARCHAR(50) NOT NULL                  -- e.g. task_created, task_assigned, status_changed, comment_added, member_added
-details       JSON NULLABLE                         -- e.g. {"from": "todo", "to": "in_progress", "assignee": "Priya"}
+action        VARCHAR(50) NOT NULL                  -- e.g. task_created, task_assigned, status_changed, subtask_updated, comment_added, member_added
+details       JSON NULLABLE                         -- e.g. {"from": "todo", "to": "in_progress"} or {"subtask_id": 4, "note": "Add image upload"}
 created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 
 -- notifications                                    -- NEW
@@ -178,7 +178,9 @@ PATCH  /tasks/{id}/status      # for drag-and-drop updates
 
 POST   /tasks/{id}/ai-assist   # calls Gemini, returns description + subtasks
 POST   /tasks/{id}/subtasks
-PATCH  /subtasks/{id}
+PUT    /subtasks/{id}          # edit subtask title and description
+PATCH  /subtasks/{id}          # update completion state or other individual fields
+DELETE /subtasks/{id}
 
 POST   /tasks/{id}/comments            # NEW
 GET    /tasks/{id}/comments            # NEW
@@ -197,37 +199,21 @@ POST   /notifications/read-all         # NEW
 
 **Provider:** Google Gemini API (free tier)
 
-**Trigger:** User creates/edits a task, types a title (e.g. "Set up user authentication"), clicks "AI Assist."
+**Trigger:** User creates or edits a task, enters a title (e.g. "Set up user authentication"), and chooses an AI action such as generating a description or subtasks.
 
-**Flow:**
-1. Frontend sends `POST /tasks/{id}/ai-assist` with `{ title: "..." }`
-2. Backend builds a prompt and calls Gemini API
-3. Gemini is instructed to return **strict JSON** in this shape:
-```json
-{
-  "description": "Short 1-2 sentence description of the task.",
-  "subtasks": ["Subtask 1", "Subtask 2", "Subtask 3"]
-}
-```
-4. Backend parses the JSON, saves the raw prompt + response into `ai_logs`, and returns the parsed result to frontend
-5. Frontend pre-fills the description field and subtask list; user can edit before saving
-6. When user saves, backend updates `ai_logs.was_accepted` based on whether the content was changed
+**Planned agent workflow:**
+1. Frontend sends `POST /tasks/{id}/ai-assist` with the title, selected action, and relevant task context.
+2. Backend reads role instructions, action-specific guidance, and restrictions from a prompt file. These define what the AI agent is responsible for and what it must not do.
+3. The agent works through multiple bounded stages before returning an answer: understand the requested action and task, plan a suitable result, draft it, then review it against the instructions and output requirements.
+4. Backend validates the result and asks for a correction if it fails validation, with a strict limit on retries.
+5. The final result is saved to `ai_logs` and returned to the frontend. The user can review and edit it before saving the task.
+6. When the user saves, backend updates `ai_logs.was_accepted` based on whether the suggestion was used as generated or edited.
 
-**Example prompt template:**
-```
-You are a project management assistant. Given the following task title from a software project, 
-generate a short description (max 2 sentences) and 3-5 concrete, actionable subtasks.
+**Restrictions:** The agent only drafts task content. It must follow the role and action-specific rules in its instruction files, return the requested structured output, and never create or modify project data by itself. The user remains in control and approves any suggested content before it is saved.
 
-Task title: "{title}"
+**Output format:** Return strict JSON for the requested action, with a description, a list of subtasks, or both as appropriate.
 
-Respond ONLY with valid JSON in this exact format, no extra text:
-{
-  "description": "...",
-  "subtasks": ["...", "...", "..."]
-}
-```
-
-**Error handling:** if Gemini API fails or returns malformed JSON, fall back gracefully (show a toast "AI suggestion failed, please fill manually") — do not block task creation.
+**Error handling:** If Gemini fails, returns invalid output, or cannot produce a result within the bounded workflow, show a toast such as "AI suggestion failed, please fill manually". AI failure must not block task creation.
 
 ---
 
@@ -238,7 +224,7 @@ Every important action goes through ONE backend helper function, e.g. `record_ev
 1. Inserts a row into `activity_log`
 2. Creates `notifications` rows for the right people
 
-Endpoints (create task, assign, change status, comment, add member) just call this helper. This gives us the task history, the Activity board, and all notifications from one piece of code.
+Endpoints (create task, assign, change status, create/edit/delete a subtask, comment, add member) just call this helper. Subtask changes are recorded in `activity_log` with details such as the subtask title and what changed. This gives us the task history, the Activity board, and all notifications from one piece of code.
 
 ### Who gets notified
 | Event | Notified |
@@ -280,9 +266,11 @@ backend/
     routers/                # auth.py, projects.py, tasks.py, ai.py, comments.py,
                             #   activity.py, analytics.py, notifications.py
     services/
-      ai_service.py          # Gemini API call logic, prompt building
+      ai_agent.py            # bounded multi-stage AI workflow
       event_service.py       # record_event(): activity log + notifications
       scheduler.py           # APScheduler deadline checker
+    prompts/
+      agent_instructions.md  # agent role, action guidance, and restrictions
     auth/
       jwt_handler.py
       google_auth.py          # verifies Google ID token, finds/creates/links user
@@ -351,12 +339,12 @@ Days 1-5 build the core (~5 hrs each per day). Days 6-7 add the collaboration an
 - **Person B:** Build Kanban board UI with drag-and-drop (`@dnd-kit`), Task cards, Task creation/edit modal (without AI yet)
 
 ### Day 5 (5 hrs each)
-- **Person A:** Build `ai_service.py` (Gemini API call + prompt), `POST /tasks/{id}/ai-assist` endpoint, `ai_logs` saving logic, error handling/fallback
+- **Person A:** Build `ai_agent.py` with prompt-file instructions and a bounded multi-stage workflow, `POST /tasks/{id}/ai-assist` endpoint, `ai_logs` saving logic, and graceful error handling/fallback
 - **Person B:** Wire "AI Assist" button in Task modal to the endpoint, show loading state, pre-fill description/subtasks, allow editing before save
 
 ### Day 6 (~7 hrs each) — Task detail, comments, activity log
 - **Person A:**
-  - Build `event_service.record_event()` and call it from task create, assign, status change, and member add endpoints (4 hrs)
+  - Build `event_service.record_event()` and call it from task create, assign, status change, subtask create/edit/delete, and member add endpoints (4 hrs)
   - Build comments endpoints, and make `GET /tasks/{id}` return creator, assignee, subtasks, comments, and history (3 hrs)
 - **Person B:**
   - Build `TaskDetailPanel` (opens when a task card is clicked) with people, subtasks, comments list, comment form, and history (5 hrs)
