@@ -1,5 +1,6 @@
 from app.models.activity import ActivityLog
 from app.models.comment import Comment
+from app.models.email_verification import EmailVerification
 from app.models.enums import ActivityAction, Priority, ProjectRole, TaskStatus
 from app.models.notification import Notification
 from app.models.project import Project, ProjectMember
@@ -12,6 +13,7 @@ __all__ = [
     "ActivityLog",
     "AiLog",
     "Comment",
+    "EmailVerification",
     "Notification",
     "Priority",
     "Project",
