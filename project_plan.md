@@ -33,6 +33,7 @@ Beyond the board, TaskFlow is a real **team collaboration tool**:
 | Charts | Recharts |
 | Scheduled jobs (deadline alerts) | APScheduler |
 | Auth | JWT (`python-jose`) + password hashing (`passlib[bcrypt]`) |
+| Email verification | Brevo transactional email API for one-time signup codes |
 | Google sign-in | `@react-oauth/google` (frontend) + `google-auth` (backend token verification) |
 | AI | Google Gemini API (free tier) |
 | Backend hosting | Render or Railway (free tier) |
@@ -44,7 +45,7 @@ Beyond the board, TaskFlow is a real **team collaboration tool**:
 ## 3. Core Features
 
 ### Base features
-1. **Auth** — register, login, JWT-based session, password hashing, plus **"Continue with Google"** sign-in. Google users are found or created by email; if the email already exists from a password signup, the Google login links to that same account instead of creating a duplicate. Email/password login stays as a fallback.
+1. **Auth** — During signup, the user verifies ownership of their email using either Google or a one-time code sent through Brevo. Both options lead to the same signup form, where the user chooses a unique username and password. The account is created only after email verification and credential submission. Sign-in supports either username/password or Google. Google verification never gives TaskFlow the user's Google password. Store passwords only as secure hashes.
 2. **Projects** — create/view/edit/delete a project, list all projects a user belongs to
 3. **Project Members** — add a user to a project by email, roles: owner / member
 4. **Tasks** — create/view/edit/delete tasks within a project; fields: title, description, status (todo/in_progress/done), multiple assignees, due date, priority, created by
@@ -72,9 +73,10 @@ Beyond the board, TaskFlow is a real **team collaboration tool**:
 ```sql
 -- users
 id            INT PK AUTO_INCREMENT
-name          VARCHAR(100)
+username      VARCHAR(50) UNIQUE NOT NULL
+name          VARCHAR(100) NULLABLE                 -- optional display name
 email         VARCHAR(150) UNIQUE NOT NULL
-password_hash VARCHAR(255) NULLABLE                -- CHANGED: null for Google-only users
+password_hash VARCHAR(255) NOT NULL                 -- every signup creates TaskFlow credentials
 google_id     VARCHAR(100) UNIQUE NULLABLE         -- NEW: Google account id
 avatar_url    VARCHAR(500) NULLABLE                -- NEW: profile photo from Google
 created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -158,9 +160,12 @@ created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 ## 5. API Endpoints (FastAPI)
 
 ```
-POST   /auth/register
-POST   /auth/login
-POST   /auth/google            # NEW: receives Google token, verifies it, returns our JWT
+POST   /auth/email-code                # send one-time signup code through Brevo
+POST   /auth/email-code/verify         # verify code; return short-lived signup token
+POST   /auth/google                    # verify Google identity; existing account signs in,
+                                       # new account receives short-lived signup token
+POST   /auth/register                  # signup token + username + password creates account
+POST   /auth/login                     # username + password returns TaskFlow JWT
 
 GET    /projects
 POST   /projects
@@ -276,7 +281,8 @@ backend/
       agent_instructions.md  # agent role, action guidance, and restrictions
     auth/
       jwt_handler.py
-      google_auth.py          # verifies Google ID token, finds/creates/links user
+      google_auth.py          # verifies Google ID token and email ownership
+      email_verification.py   # code generation, expiry, and Brevo delivery
       dependencies.py         # get_current_user
   requirements.txt
   .env
@@ -324,15 +330,16 @@ Days 1-5 build the core (~5 hrs each per day). Days 6-7 add the collaboration an
 - **Person A:** Set up FastAPI project skeleton, connect to MySQL (Railway), create SQLAlchemy models for all tables, run initial migration
 - **Person B:** Set up React project (Vite + Tailwind), set up routing, build static Login/Register pages (no logic yet), set up Axios client
 
-### Day 2 (~7 hrs each) — Auth, including Google sign-in
+### Day 2 (~7 hrs each) — Auth, email verification, and Google sign-in
 - **Person A:**
-  - Build auth endpoints (register/login), JWT generation, password hashing, `get_current_user` dependency (5 hrs)
-  - Build `POST /auth/google`: verify the Google token with `google-auth`, find or create the user by email, link to an existing account if the email already exists, return our JWT (2 hrs)
+  - Build username/password registration and login, JWT generation, password hashing, and `get_current_user` dependency (3 hrs)
+  - Build email-code signup flow using Brevo: generate a one-time code, set an expiry and resend/attempt limits, verify it, and issue a short-lived signup token (2 hrs)
+  - Build Google verification: verify the Google ID token and verified email; sign in an existing linked account or issue a short-lived signup token for a new account. Both signup methods finish at the shared username/password form (2 hrs)
 - **Person B:**
-  - Build Login/Register forms with real API calls, AuthContext for storing JWT, protected route wrapper (5 hrs)
+  - Build signup screens for Google-or-email-code verification, then the shared username/password form; build username/password login and AuthContext (5 hrs)
   - Add `GoogleLoginButton` with `@react-oauth/google` and connect it to `/auth/google` (1-2 hrs)
-- **Both (first 30 min):** Create the OAuth Client ID in Google Cloud Console and add it to both `.env` files. Add `http://localhost:5173` as an allowed origin now, and the Vercel URL when you deploy.
-- **Tip:** Build email/password login first. If Google setup gives trouble, you still have a working login.
+- **Both (first 30 min):** Configure Google OAuth Client ID and allowed origins. Set up Brevo sender/API key for transactional email and configure local environment variables. Add production origins when deploying.
+- **Security rules:** Keep Brevo API key server-side; never commit it. Store verification codes hashed with short expiry, limit attempts/resends, and create no account until verification and credential submission both succeed.
 
 ### Day 3 (5 hrs each)
 - **Person A:** Build Projects CRUD endpoints + Project Members endpoints
