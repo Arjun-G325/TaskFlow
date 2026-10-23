@@ -162,20 +162,48 @@ export default function App() {
   }
 
   if (user) {
+    const columns = [
+      { title: "To Do", tone: "slate" },
+      { title: "In Progress", tone: "blue" },
+      { title: "Done", tone: "green" },
+    ];
+
     return (
-      <main className="auth-page">
-        <section className="auth-card account-card">
+      <main className="workspace-shell">
+        <aside className="workspace-sidebar">
           <Brand />
-          <div className="success-mark" aria-hidden="true">✓</div>
-          <p className="eyebrow">SIGNED IN</p>
-          <h1>Welcome, {user.username}</h1>
-          <p className="auth-subtitle">Your login token was accepted. The backend identified this account:</p>
-          <dl className="account-details">
-            <div><dt>Username</dt><dd>{user.username}</dd></div>
-            <div><dt>Email</dt><dd>{user.email}</dd></div>
-            <div><dt>User ID</dt><dd>{user.id}</dd></div>
-          </dl>
-          <button className="primary-button full-width" onClick={handleLogout}>Log out</button>
+          <div className="workspace-label">WORKSPACE</div>
+          <button className="workspace-nav active"><span aria-hidden="true">Projects</span> My projects</button>
+          <button className="workspace-nav"><span aria-hidden="true">Tasks</span> My tasks</button>
+          <div className="sidebar-account">
+            <div className="avatar">{user.username.charAt(0).toUpperCase()}</div>
+            <div className="sidebar-account-copy"><strong>{user.username}</strong><small>{user.email}</small></div>
+          </div>
+        </aside>
+        <section className="workspace-main">
+          <header className="workspace-topbar">
+            <div className="workspace-breadcrumb">Projects <span>/</span> <strong>Website redesign</strong></div>
+            <button className="logout-button" onClick={handleLogout}>Log out</button>
+          </header>
+          <div className="workspace-content">
+            <div className="project-heading">
+              <div><div className="eyebrow">PROJECT</div><h1>Website redesign</h1><p>Plan, track, and ship your team’s best work.</p></div>
+              <button className="primary-button new-task-button" disabled>+ <span>New task</span></button>
+            </div>
+            <div className="board-toolbar">
+              <div className="view-tabs"><button className="selected">Board</button><button disabled>Activity</button><button disabled>Progress</button></div>
+              <button className="filter-button" disabled>Filter</button>
+            </div>
+            <div className="task-board">
+              {columns.map((column) => (
+                <section className="task-column" key={column.title}>
+                  <div className="task-column-heading"><div><span className={`status-dot ${column.tone}`} /><h2>{column.title}</h2><span className="count">0</span></div><button aria-label={`More ${column.title} options`} disabled>...</button></div>
+                  <div className="empty-column"><span className="empty-icon">+</span><span>No tasks yet</span></div>
+                  <button className="add-task" disabled>+ Add task</button>
+                </section>
+              ))}
+            </div>
+          </div>
         </section>
       </main>
     );
