@@ -1,6 +1,8 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+from app.models.enums import ProjectRole
 
 
 class ProjectCreate(BaseModel):
@@ -39,3 +41,14 @@ class ProjectRead(BaseModel):
     description: str | None
     owner_id: int
     created_at: datetime
+
+
+class ProjectMemberAdd(BaseModel):
+    email: EmailStr
+
+
+class ProjectMemberRead(BaseModel):
+    user_id: int
+    username: str
+    email: EmailStr
+    role: ProjectRole

@@ -17,7 +17,13 @@ from app.models import (
     TaskAssignee,
     User,
 )
-from app.schemas.projects import ProjectCreate, ProjectRead, ProjectUpdate
+from app.schemas.projects import (
+    ProjectCreate,
+    ProjectMemberAdd,
+    ProjectMemberRead,
+    ProjectRead,
+    ProjectUpdate,
+)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -102,6 +108,101 @@ def get_project(
 ) -> Project:
     """View a project if the signed-in user owns it or is a member."""
     return _get_accessible_project(db, project_id, current_user.id)
+
+
+@router.get("/{project_id}/members", response_model=list[ProjectMemberRead])
+def list_project_members(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[dict]:
+    _get_accessible_project(db, project_id, current_user.id)
+    members = db.scalars(
+        select(ProjectMember)
+        .where(ProjectMember.project_id == project_id)
+        .order_by(ProjectMember.role, ProjectMember.user_id)
+    ).all()
+    return [
+        {
+            "user_id": membership.user.id,
+            "username": membership.user.username,
+            "email": membership.user.email,
+            "role": membership.role,
+        }
+        for membership in members
+    ]
+
+
+@router.post(
+    "/{project_id}/members",
+    response_model=ProjectMemberRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_project_member(
+    project_id: int,
+    payload: ProjectMemberAdd,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    project = _get_accessible_project(db, project_id, current_user.id)
+    _require_owner(project, current_user.id)
+
+    email = str(payload.email).strip().lower()
+    member = db.scalar(select(User).where(User.email == email))
+    if member is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No TaskFlow account uses that email address.",
+        )
+    existing = db.get(ProjectMember, (project_id, member.id))
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="That user is already a project member.",
+        )
+
+    membership = ProjectMember(
+        project_id=project_id,
+        user_id=member.id,
+        role=ProjectRole.MEMBER,
+    )
+    db.add(membership)
+    db.commit()
+    return {
+        "user_id": member.id,
+        "username": member.username,
+        "email": member.email,
+        "role": ProjectRole.MEMBER,
+    }
+
+
+@router.delete("/{project_id}/members/{member_user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_project_member(
+    project_id: int,
+    member_user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Remove a member and their task assignments from an owned project."""
+    project = _get_accessible_project(db, project_id, current_user.id)
+    _require_owner(project, current_user.id)
+    if member_user_id == project.owner_id:
+        raise HTTPException(status_code=400, detail="The project owner cannot be removed.")
+
+    membership = db.get(ProjectMember, (project_id, member_user_id))
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Project member not found.")
+
+    task_ids = select(Task.id).where(Task.project_id == project_id)
+    db.execute(
+        delete(TaskAssignee).where(
+            TaskAssignee.task_id.in_(task_ids),
+            TaskAssignee.user_id == member_user_id,
+        )
+    )
+    db.delete(membership)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.put("/{project_id}", response_model=ProjectRead)
