@@ -65,15 +65,17 @@ def generate_task_draft(title: str) -> AiAssistRead:
             response_text = generate(prompt, AiSuggestionPayload)
             suggestion = AiSuggestionPayload.model_validate_json(response_text)
 
-        review_prompt = (
-            f"{instructions}\n\nStage 3: review the draft against the plan and requirements. "
-            "Return valid=true only if the description is useful and the 3-5 subtasks are "
-            "specific, actionable, distinct, and appropriate to scope. Otherwise list concise "
-            "issues for one correction attempt. Do not rewrite the content.\n"
-            f"Plan: {plan.model_dump_json()}\nDraft: {suggestion.model_dump_json()}"
-        )
-        review_text = generate(review_prompt, AiReview)
-        review = AiReview.model_validate_json(review_text)
+        def review_draft(draft: AiSuggestionPayload) -> AiReview:
+            review_prompt = (
+                f"{instructions}\n\nStage 3: review the draft against the plan and requirements. "
+                "Return valid=true only if the description is useful and the 3-5 subtasks are "
+                "specific, actionable, distinct, and appropriate to scope. Otherwise list concise "
+                "issues for one correction attempt. Do not rewrite the content.\n"
+                f"Plan: {plan.model_dump_json()}\nDraft: {draft.model_dump_json()}"
+            )
+            return AiReview.model_validate_json(generate(review_prompt, AiReview))
+
+        review = review_draft(suggestion)
         if not review.valid:
             if correction_used:
                 raise AiAssistUnavailable(
@@ -88,6 +90,11 @@ def generate_task_draft(title: str) -> AiAssistRead:
             prompt = correction_prompt
             response_text = generate(prompt, AiSuggestionPayload)
             suggestion = AiSuggestionPayload.model_validate_json(response_text)
+            final_review = review_draft(suggestion)
+            if not final_review.valid:
+                raise AiAssistUnavailable(
+                    "Gemini could not produce a valid suggestion after one correction. Please fill it in manually."
+                )
 
         return AiAssistRead(
             **suggestion.model_dump(), prompt_sent=prompt, ai_response=response_text

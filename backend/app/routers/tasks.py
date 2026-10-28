@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
@@ -283,6 +283,7 @@ def update_task(
             )
     if assignee_ids is not None:
         newly_assigned = set(assignee_ids) - old_assignees
+        newly_unassigned = old_assignees - set(assignee_ids)
         if newly_assigned:
             record_event(
                 db,
@@ -293,6 +294,15 @@ def update_task(
                 task=task,
                 notification_message=f"You were assigned task '{task.title}'.",
                 recipient_ids=newly_assigned,
+            )
+        if newly_unassigned:
+            record_event(
+                db,
+                actor_id=current_user.id,
+                project_id=project_id,
+                action="task_unassigned",
+                details={"title": task.title, "user_ids": sorted(newly_unassigned)},
+                task=task,
             )
     if new_subtasks:
         for draft in new_subtasks:
@@ -355,12 +365,14 @@ def delete_task(
         )
     )
     db.execute(
-        delete(ActivityLog).where(
+        update(ActivityLog)
+        .where(
             or_(
                 ActivityLog.task_id == task.id,
                 ActivityLog.subtask_id.in_(subtask_ids),
             )
         )
+        .values(task_id=None, subtask_id=None)
     )
     db.execute(delete(AiLog).where(AiLog.task_id == task.id))
     db.execute(delete(Subtask).where(Subtask.task_id == task.id))

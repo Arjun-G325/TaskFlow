@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth.dependencies import get_current_user
@@ -212,9 +212,14 @@ def delete_subtask(
         task=task,
         notification_message=f"Subtask '{subtask.title}' was deleted.",
     )
+    db.flush()
     db.execute(delete(Comment).where(Comment.subtask_id == subtask_id))
     db.execute(delete(Notification).where(Notification.subtask_id == subtask_id))
-    db.execute(delete(ActivityLog).where(ActivityLog.subtask_id == subtask_id))
+    db.execute(
+        update(ActivityLog)
+        .where(ActivityLog.subtask_id == subtask_id)
+        .values(subtask_id=None)
+    )
     db.delete(subtask)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

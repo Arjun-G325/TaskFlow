@@ -18,7 +18,20 @@ export default function ProgressPanel({ data }) {
       <h2>Progress</h2>
       <div className="analytics-metrics">
         <article><strong>{data.total_tasks}</strong><span>Total tasks</span></article>
-        <article><strong>{data.completion_percentage}%</strong><span>Complete</span></article>
+        <article className="completion-metric">
+          <strong>{data.completion_percentage}%</strong>
+          <span>Complete</span>
+          <div
+            className="completion-progress"
+            role="progressbar"
+            aria-label="Project tasks complete"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={data.completion_percentage}
+          >
+            <div style={{ width: `${Math.min(100, Math.max(0, data.completion_percentage))}%` }} />
+          </div>
+        </article>
         <article><strong>{data.overdue_tasks}</strong><span>Overdue</span></article>
       </div>
       <div className="analytics-grid">

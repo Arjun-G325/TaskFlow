@@ -1126,6 +1126,7 @@ function activityLabel(action) {
     task_created: "created a task",
     task_updated: "updated a task",
     task_assigned: "assigned a task",
+    task_unassigned: "removed an assignee from a task",
     task_deleted: "deleted a task",
     status_changed: "changed a task status",
     subtask_created: "created a subtask",

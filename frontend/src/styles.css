@@ -395,6 +395,8 @@ button { cursor: pointer; }
 .analytics-metrics strong, .analytics-metrics span { display: block; }
 .analytics-metrics strong { color: #383c4e; font: 700 22px 'Manrope', sans-serif; }
 .analytics-metrics span { margin-top: 4px; color: #9297a5; font-size: 10px; }
+.completion-progress { height: 8px; margin-top: 10px; overflow: hidden; border-radius: 999px; background: #eeedf7; }
+.completion-progress > div { height: 100%; border-radius: inherit; background: #6558e8; transition: width 180ms ease; }
 .analytics-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .chart-card h3 { margin: 0 0 9px; color: #4a4e5e; font-size: 12px; }
 .chart-card:last-child { grid-column: 1 / -1; }
