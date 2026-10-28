@@ -24,6 +24,7 @@ from app.schemas.projects import (
     ProjectRead,
     ProjectUpdate,
 )
+from app.services.event_service import record_event
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -94,6 +95,13 @@ def create_project(
             user_id=current_user.id,
             role=ProjectRole.OWNER,
         )
+    )
+    record_event(
+        db,
+        actor_id=current_user.id,
+        project_id=project.id,
+        action="project_created",
+        details={"name": project.name},
     )
     db.commit()
     db.refresh(project)
@@ -167,6 +175,15 @@ def add_project_member(
         role=ProjectRole.MEMBER,
     )
     db.add(membership)
+    record_event(
+        db,
+        actor_id=current_user.id,
+        project_id=project_id,
+        action="member_added",
+        details={"user_id": member.id, "username": member.username},
+        notification_message=f"You were added to project '{project.name}'.",
+        recipient_ids={member.id},
+    )
     db.commit()
     return {
         "user_id": member.id,
@@ -200,6 +217,13 @@ def remove_project_member(
             TaskAssignee.user_id == member_user_id,
         )
     )
+    record_event(
+        db,
+        actor_id=current_user.id,
+        project_id=project_id,
+        action="member_removed",
+        details={"user_id": member_user_id, "username": membership.user.username},
+    )
     db.delete(membership)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -223,8 +247,23 @@ def update_project(
             detail="Provide a project name or description to update.",
         )
 
+    previous = {field: getattr(project, field) for field in changes}
     for field, value in changes.items():
         setattr(project, field, value)
+
+    record_event(
+        db,
+        actor_id=current_user.id,
+        project_id=project.id,
+        action="project_updated",
+        details={
+            "name": project.name,
+            "changes": {
+                field: {"before": previous[field], "after": value}
+                for field, value in changes.items()
+            },
+        },
+    )
 
     db.commit()
     db.refresh(project)
