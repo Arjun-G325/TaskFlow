@@ -48,7 +48,7 @@ Beyond the board, TaskFlow is a real **team collaboration tool**:
 1. **Auth** — During signup, the user verifies ownership of their email using either Google or a one-time code sent through Brevo. Both options lead to the same signup form, where the user chooses a unique username and password. The account is created only after email verification and credential submission. Sign-in supports either username/password or Google. Google verification never gives TaskFlow the user's Google password. Store passwords only as secure hashes.
 2. **Projects** — create/view/edit/delete a project, list all projects a user belongs to
 3. **Project Members** — add a user to a project by email, roles: owner / member
-4. **Tasks** — create/view/edit/delete tasks within a project; fields: title, description, status (todo/in_progress/done), multiple assignees, due date, priority, created by
+4. **Tasks** — create/view/edit/delete tasks within a project; fields: title, description, status (todo/in_progress/done), multiple assignees, due date with UTC or IST timezone selection, priority, created by. Highlight unfinished task titles orange during the final 24 hours and red after the deadline.
 5. **Kanban Board** — drag-and-drop tasks between status columns, updates DB on drop
 6. **AI Assist** — button on task creation/edit: user types a short title, clicks "AI Assist," AI generates a description + 3-5 subtasks, user can edit before saving
 
@@ -59,7 +59,7 @@ Beyond the board, TaskFlow is a real **team collaboration tool**:
    - You are assigned a task
    - Someone comments on a subtask you created or are assigned to
    - Status of a task or subtask you created or are assigned to changes
-   - A deadline is close (due within 24 hours) or missed (overdue)
+   - A deadline is close (due within 24 hours) or missed (overdue); show deadline times in the task's selected timezone
    - You are added to a project
 
    Clicking a notification opens the related task or subtask. "Mark all as read" button.
@@ -100,7 +100,8 @@ title         VARCHAR(200) NOT NULL
 description   TEXT
 status        ENUM('todo', 'in_progress', 'done') DEFAULT 'todo'
 created_by_id INT FK -> users.id NOT NULL          -- NEW: who created/assigned it
-due_at        DATETIME NULLABLE                      -- deadline date and time
+due_at        DATETIME NULLABLE                      -- deadline instant, stored as UTC
+due_timezone  VARCHAR(32) DEFAULT 'UTC'              -- selected display/input zone: UTC or Asia/Kolkata (IST)
 priority      ENUM('low', 'medium', 'high') DEFAULT 'medium'
 completed_at  DATETIME NULLABLE                    -- NEW: set when moved to done (for analytics)
 created_at    DATETIME DEFAULT CURRENT_TIMESTAMP    -- task creation time
@@ -177,7 +178,7 @@ POST   /projects/{id}/members
 GET    /projects/{id}/members
 
 GET    /projects/{id}/tasks
-POST   /projects/{id}/tasks    # accepts assignee_ids: [user_id, ...]
+POST   /projects/{id}/tasks    # accepts assignee_ids and due_timezone ('UTC' or 'Asia/Kolkata')
 GET    /tasks/{id}             # parent task details and subtask list
 PUT    /tasks/{id}             # may replace assignee_ids
 DELETE /tasks/{id}
@@ -246,7 +247,7 @@ Endpoints (create task, assign, change status, create/edit/delete a subtask, com
 Never notify a user about their own action.
 
 ### Deadline checker
-A scheduled job (APScheduler, runs hourly) finds tasks that are due within 24 hours or overdue and not done, and creates notifications. To avoid duplicates, skip a task if a deadline notification of the same type already exists for it today.
+A scheduled job (APScheduler, runs hourly) finds tasks that are due within 24 hours or overdue and not done, and creates notifications. Deadline instants are compared in UTC; message times use the task's selected UTC or IST timezone. Unfinished task titles turn orange within 24 hours of the deadline and red after it passes. To avoid duplicates, skip a task if a deadline notification of the same type already exists for it today.
 
 ### Analytics endpoint
 `GET /projects/{id}/analytics` returns aggregated data computed with SQL `GROUP BY` queries:

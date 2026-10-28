@@ -135,17 +135,35 @@ def verify_google_signup(
             detail="Google could not verify this sign-in. Try again.",
         ) from exc
 
-    existing_user = db.scalar(
-        select(User.id).where(User.email == identity["email"])
-    )
-    if existing_user:
+    existing_user = db.scalar(select(User).where(User.email == identity["email"]))
+    google_user = db.scalar(select(User).where(User.google_id == identity["google_id"]))
+    if google_user is not None and (existing_user is None or google_user.id != existing_user.id):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="An account already uses this email. Sign in to that account.",
+            detail="This Google account is already linked to another TaskFlow account.",
         )
 
+    if existing_user is not None:
+        if existing_user.google_id and existing_user.google_id != identity["google_id"]:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A different Google account is already linked to this TaskFlow account.",
+            )
+        existing_user.google_id = identity["google_id"]
+        existing_user.name = identity.get("name") or existing_user.name
+        existing_user.avatar_url = identity.get("avatar_url") or existing_user.avatar_url
+        db.commit()
+        return {
+            "access_token": create_access_token(existing_user.id),
+            "token_type": "bearer",
+            "email": existing_user.email,
+        }
+
     signup_token = create_signup_token(
-        identity["email"], google_id=identity["google_id"]
+        identity["email"],
+        google_id=identity["google_id"],
+        google_name=identity.get("name"),
+        avatar_url=identity.get("avatar_url"),
     )
     return {"email": identity["email"], "signup_token": signup_token}
 
@@ -223,10 +241,11 @@ def complete_signup(
     username = payload.username.strip().lower()
     user = User(
         username=username,
-        name=username,
+        name=(claims.get("google_name") or username)[:100],
         email=email,
         password_hash=hash_password(payload.password),
         google_id=claims.get("google_id") if method == "google" else None,
+        avatar_url=claims.get("avatar_url") if method == "google" else None,
     )
     if verification is not None:
         verification.consumed_at = now

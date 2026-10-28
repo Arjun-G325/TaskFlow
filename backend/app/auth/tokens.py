@@ -47,6 +47,8 @@ def create_signup_token(
     verification_id: int | None = None,
     *,
     google_id: str | None = None,
+    google_name: str | None = None,
+    avatar_url: str | None = None,
 ) -> str:
     """Create a short-lived token proving email-code or Google verification."""
     if not SECRET_KEY:
@@ -67,6 +69,10 @@ def create_signup_token(
         assert google_id is not None
         claims["method"] = "google"
         claims["google_id"] = google_id
+        if google_name:
+            claims["google_name"] = google_name[:100]
+        if avatar_url:
+            claims["avatar_url"] = avatar_url[:500]
     return jwt.encode(claims, SECRET_KEY, algorithm=ALGORITHM)
 
 

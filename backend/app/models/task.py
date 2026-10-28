@@ -48,7 +48,11 @@ class Task(Base):
     created_by_id: Mapped[int] = mapped_column(
         ForeignKey("users.id"), nullable=False, index=True
     )
+    # UTC is stored as a naive value because MySQL DATETIME has no timezone support.
     due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    due_timezone: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="UTC", server_default="UTC"
+    )
     priority: Mapped[Priority] = mapped_column(
         SqlEnum(
             Priority,
